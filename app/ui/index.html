@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShareKVM</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="icon.png" alt="" width="28" height="28">
+      <h1>ShareKVM</h1>
+    </div>
+    <div id="pill" class="pill" data-state="stopped"><span class="dot"></span><span id="pill-text">Stopped</span></div>
+  </header>
+
+  <main>
+    <div class="power">
+      <div class="power-text">
+        <strong>Sharing</strong>
+        <span id="power-hint">Runs in the background. Closing this window doesn't stop it.</span>
+      </div>
+      <label class="switch" title="Turn sharing on or off">
+        <input type="checkbox" id="enabled" role="switch" aria-label="Sharing">
+        <span class="track"><span class="thumb"></span></span>
+      </label>
+    </div>
+
+    <div class="segmented" role="tablist" aria-label="Mode">
+      <button role="tab" data-mode="server" id="mode-server">
+        <strong>Share my mouse &amp; keyboard</strong>
+        <span>Use this computer's mouse and keyboard on another one</span>
+      </button>
+      <button role="tab" data-mode="client" id="mode-client">
+        <strong>Be controlled</strong>
+        <span>Let another computer's mouse and keyboard drive this one</span>
+      </button>
+    </div>
+
+    <!-- Server -->
+    <section id="panel-server" class="panel">
+      <h2>Where is the other computer?</h2>
+      <p class="hint">Click the side of this screen the other computer sits on. The cursor crosses over at that edge.</p>
+      <div class="layout" id="layout">
+        <button class="slot" data-edge="top" aria-label="Above"></button>
+        <button class="slot" data-edge="left" aria-label="Left"></button>
+        <div class="screen me">
+          <div class="monitors" id="monitors" aria-hidden="true"></div>
+          <span class="screen-label" id="me-label">This computer</span>
+        </div>
+        <button class="slot" data-edge="right" aria-label="Right"></button>
+        <button class="slot" data-edge="bottom" aria-label="Below"></button>
+      </div>
+
+      <h2>On the other computer</h2>
+      <p class="hint">Choose <strong id="visible-name">this computer</strong> under “Computers on your network”, or enter the address. The pairing code is only needed the first time.</p>
+      <div class="pair">
+        <div class="pair-item">
+          <label>Address</label>
+          <div class="big mono" id="my-address">…</div>
+        </div>
+        <div class="pair-item">
+          <label for="code-server">Pairing code</label>
+          <div class="code-row">
+            <input id="code-server" class="big mono code" maxlength="32" autocomplete="off" spellcheck="false">
+            <button class="icon-btn" id="regen" title="New code" aria-label="Generate a new code">↻</button>
+          </div>
+        </div>
+      </div>
+
+      <h2>Paired computers</h2>
+      <ul class="peers" id="peers-client-role" aria-live="polite"></ul>
+      <p class="hint" id="peers-client-role-empty">None yet. Once a computer pairs with the code, it's remembered and won't need the code again.</p>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <label class="field">Port
+          <input id="port" type="number" min="1024" max="65535">
+        </label>
+      </details>
+    </section>
+
+    <!-- Client -->
+    <section id="panel-client" class="panel" hidden>
+      <h2>Computers on your network</h2>
+      <ul class="peers" id="discovered" aria-live="polite"></ul>
+      <p class="hint searching" id="discovered-empty"><span class="spinner" aria-hidden="true"></span>
+        Looking for computers… On the other computer, open ShareKVM, choose “Share my mouse &amp; keyboard” and press Start.</p>
+
+      <h2>Or connect by address</h2>
+      <label class="field">Address of the computer sharing its mouse
+        <input id="server-address" placeholder="192.168.1.20" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field"><span>Pairing code <span class="sub">· only needed the first time</span></span>
+        <input id="code-client" class="mono" placeholder="Shown on the other computer" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="swap">
+        <span><strong>Swap Ctrl and <span id="meta-name">Cmd</span></strong><br>
+        <small>Useful when a Mac controls a Windows PC, or the other way round.</small></span>
+      </label>
+
+      <h2>Remembered computers</h2>
+      <ul class="peers" id="peers-server-role" aria-live="polite"></ul>
+      <p class="hint" id="peers-server-role-empty">None yet. After the first connection, this computer reconnects without a code.</p>
+    </section>
+
+    <label class="field name-field">This computer's name
+      <input id="name" autocomplete="off">
+    </label>
+
+    <label class="toggle">
+      <input type="checkbox" id="autostart">
+      <span><strong>Open ShareKVM at login</strong><br>
+      <small>Starts quietly in the <span id="tray-name">menu bar</span>, so sharing is always ready.</small></span>
+    </label>
+
+    <div id="message" class="message" hidden></div>
+
+    <section id="files" class="panel" hidden>
+      <div class="dropzone" id="dropzone">
+        <div class="drop-icon" aria-hidden="true">⇪</div>
+        <strong id="drop-title">Drop files here to send them</strong>
+        <span id="drop-hint" class="hint"></span>
+      </div>
+      <ul class="transfers" id="transfers" aria-live="polite"></ul>
+      <div class="files-foot">
+        <label class="toggle small">
+          <input type="checkbox" id="reveal-received">
+          <span>Show received files in <span id="file-manager">Finder</span></span>
+        </label>
+        <button class="link-btn" id="open-downloads">Open received files</button>
+      </div>
+    </section>
+
+    <div id="mac-hint" class="note" hidden>
+      <strong>macOS:</strong> ShareKVM needs <em>Accessibility</em> and <em>Input Monitoring</em> access.
+      Open System Settings → Privacy &amp; Security, turn ShareKVM on in both lists, then press Start again.
+    </div>
+
+    <p class="footnote">Changes apply right away. ShareKVM keeps running in the <span id="tray-name-2">menu bar</span> when you close this window.
+      <br>Stuck on the other computer? Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Esc</kbd> to get your cursor back.
+      <br>🔒 Everything sent between your computers is encrypted. The pairing code is never sent over the network, and paired computers reconnect with their own saved key.</p>
+
+    <details class="log">
+      <summary>Engine log</summary>
+      <pre id="log"></pre>
+    </details>
+  </main>
+
+  <div id="drop-overlay" class="drop-overlay" hidden><div>Drop to send</div></div>
+  <script src="app.js"></script>
+</body>
+</html>

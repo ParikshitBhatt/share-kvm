@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShareKVM</string>
+    <string name="service_name">ShareKVM pointer and keyboard</string>
+    <string name="service_description">Lets the mouse and keyboard of a computer you paired with ShareKVM control this device: it shows a pointer, taps and swipes where you click, types what you type, and moves the selection with the arrow keys. ShareKVM only does this while your computer\'s cursor is on this screen, and only for computers you paired with a code.</string>
+</resources>
