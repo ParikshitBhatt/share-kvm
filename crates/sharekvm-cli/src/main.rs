@@ -152,4 +152,9 @@ fn read_commands() {
             _ => log::warn!("unknown command: {line}"),
         }
     }
+    // stdin closed: the desktop app is gone (quit, crashed or killed). Don't
+    // linger as an orphan still hooking the mouse and keyboard.
+    log::info!("app disconnected; exiting");
+    sharekvm_core::discovery::stop_advertising();
+    std::process::exit(0);
 }
