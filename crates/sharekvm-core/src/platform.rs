@@ -51,14 +51,31 @@ pub fn monitors() -> Option<(Vec<crate::screens::Rect>, usize)> {
     None
 }
 
+/// Holds the on-screen cursor still while another computer is being driven
+/// (macOS; elsewhere swallowed moves already leave the cursor in place).
+pub fn freeze_cursor(frozen: bool) {
+    #[cfg(target_os = "macos")]
+    crate::mac_hook::freeze_cursor(frozen);
+    #[cfg(not(target_os = "macos"))]
+    let _ = frozen;
+}
+
+/// Control came back to this computer: put the cursor at (x, y) and let it move again.
+pub fn leave_remote(x: f64, y: f64) {
+    warp(x, y);
+    freeze_cursor(false);
+}
+
 /// Moves the local cursor without any button semantics (global coordinates).
 pub fn warp(x: f64, y: f64) {
+    #[cfg(target_os = "macos")]
+    return crate::mac_hook::warp(x, y);
     #[cfg(windows)]
     {
         // rdev's absolute moves only span the primary monitor; this spans them all.
         win::set_cursor(x, y);
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     if let Err(e) = rdev::simulate(&EventType::MouseMove { x, y }) {
         log::debug!("warp failed: {e:?}");
     }

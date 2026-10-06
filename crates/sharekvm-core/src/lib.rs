@@ -19,6 +19,10 @@ pub mod client;
 pub mod clipboard;
 #[cfg(feature = "desktop")]
 pub mod discovery;
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+mod mac_hook;
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+mod mac_keys;
 #[cfg(feature = "desktop")]
 pub mod platform;
 #[cfg(feature = "desktop")]

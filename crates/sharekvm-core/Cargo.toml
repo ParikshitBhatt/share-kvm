@@ -9,7 +9,7 @@ default = ["desktop"]
 # Input hooks/injection, clipboard and mDNS: the macOS/Windows/Linux desktop engine.
 # Without it, the crate is the portable core (protocol, pairing, encryption,
 # trust store, file transfer, screen geometry) used by the Android app.
-desktop = ["dep:rdev", "dep:arboard", "dep:mdns-sd", "dep:core-graphics", "dep:objc", "dep:windows-sys"]
+desktop = ["dep:rdev", "dep:arboard", "dep:mdns-sd", "dep:core-foundation", "dep:core-graphics", "dep:objc", "dep:windows-sys"]
 
 [dependencies]
 anyhow = "1"
@@ -30,6 +30,7 @@ socket2 = { version = "0.5", features = ["all"] }
 spake2 = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = { version = "0.9", optional = true }
 core-graphics = { version = "0.23", optional = true }
 objc = { version = "0.2", optional = true }
 

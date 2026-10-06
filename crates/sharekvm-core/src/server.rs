@@ -16,7 +16,7 @@ use crate::secure::{self, AuthError};
 use crate::status::{emit, Status};
 use crate::trust::{self, DeviceId, Role, TrustStore};
 use anyhow::{anyhow, Context, Result};
-use rdev::{Button, Event, EventType, Key};
+use rdev::{Button, EventType, Key};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -186,24 +186,34 @@ pub fn run_server(cfg: ServerConfig) -> Result<()> {
         })?;
     }
 
-    // The hook must run on the main thread (macOS keyboard layout APIs require it).
-    rdev::grab(move |ev| on_event(&state, &g, ev)).map_err(|e| {
-        anyhow!("could not install input hook: {e:?}. On macOS, grant Accessibility and Input Monitoring permission to this app/terminal.")
+    // The hook must run on the main thread (macOS requires it).
+    #[cfg(target_os = "macos")]
+    return crate::mac_hook::run(move |h| match h {
+        crate::mac_hook::Hooked::Move { x, y, dx, dy } => on_event(&state, &g, EventType::MouseMove { x, y }, Some((dx, dy))),
+        crate::mac_hook::Hooked::Input(e) => on_event(&state, &g, e, None),
     })
+    .map_err(|e| anyhow!("{e}. Grant Accessibility and Input Monitoring permission to this app/terminal."));
+    #[cfg(not(target_os = "macos"))]
+    rdev::grab(move |ev| if on_event(&state, &g, ev.event_type, None) { Some(ev) } else { None })
+        .map_err(|e| anyhow!("could not install input hook: {e:?}"))
 }
 
-fn on_event(state: &Mutex<State>, g: &Geometry, ev: Event) -> Option<Event> {
+/// Handles one local input event. `delta` is the raw movement when the hook
+/// provides it (macOS); otherwise movement is measured from the parked cursor
+/// (Windows, where swallowed moves don't move the cursor). Returns true to let
+/// the event reach this computer.
+fn on_event(state: &Mutex<State>, g: &Geometry, ev: EventType, delta: Option<(f64, f64)>) -> bool {
     let mut st = state.lock().unwrap();
     let layout = g.layout();
     let (cx, cy) = layout.home();
 
-    if let Some(i) = st.passthrough.iter().position(|e| *e == ev.event_type) {
+    if let Some(i) = st.passthrough.iter().position(|e| *e == ev) {
         st.passthrough.remove(i);
-        return Some(ev);
+        return true;
     }
 
     if !st.remote {
-        match ev.event_type {
+        match ev {
             EventType::MouseMove { x, y } if st.conn.is_some() && layout.at_outer_edge(g.edge, x, y) => {
                 if st.local_buttons.contains(&Button::Left) {
                     st.crossed_with_left = true;
@@ -216,11 +226,15 @@ fn on_event(state: &Mutex<State>, g: &Geometry, ev: Event) -> Option<Event> {
                 }
                 st.send(Msg::Enter { pos: layout.edge_pos(g.edge, x, y) });
                 st.remote = true;
-                st.warp_pending = true;
+                st.warp_pending = delta.is_none();
                 drop(st);
                 emit(Status::Focus { remote: true });
-                platform::warp(cx, cy);
-                return None;
+                if delta.is_some() {
+                    platform::freeze_cursor(true); // raw deltas: just hold the cursor still
+                } else {
+                    platform::warp(cx, cy); // measure moves from the centre
+                }
+                return false;
             }
             EventType::KeyPress(k) if !st.local_keys.contains(&k) => st.local_keys.push(k),
             EventType::KeyRelease(k) => st.local_keys.retain(|d| *d != k),
@@ -239,28 +253,35 @@ fn on_event(state: &Mutex<State>, g: &Geometry, ev: Event) -> Option<Event> {
             }
             _ => {}
         }
-        return Some(ev);
+        return true;
     }
 
-    match ev.event_type {
+    match ev {
+        EventType::MouseMove { .. } if delta.is_some() => {
+            let (dx, dy) = delta.unwrap();
+            if dx != 0.0 || dy != 0.0 {
+                st.send(Msg::MouseDelta { dx, dy });
+            }
+            false
+        }
         EventType::MouseMove { x, y } => {
             let (dx, dy) = (x - cx, y - cy);
             // Let our own warp-to-centre through, or the cursor would never get there.
             if (st.warp_pending && dx.abs() <= 1.0 && dy.abs() <= 1.0) || (dx == 0.0 && dy == 0.0) {
                 st.warp_pending = false;
-                return Some(ev);
+                return true;
             }
             st.send(Msg::MouseDelta { dx, dy });
             st.warp_pending = true;
             drop(st);
             platform::warp(cx, cy);
-            None
+            false
         }
         // Releases for things pressed before crossing belong to this machine.
         EventType::KeyRelease(k) if st.local_keys.contains(&k) => {
             st.local_keys.retain(|d| *d != k);
             update_modifiers(&mut st, k, false);
-            Some(ev)
+            true
         }
         // Left button held since before crossing, released on the client: a drop there.
         // Cancel the local drag (Escape, then a harmless release) and send what was dragged.
@@ -275,11 +296,11 @@ fn on_event(state: &Mutex<State>, g: &Geometry, ev: Event) -> Option<Event> {
                 log::info!("dropped {} item(s) on the client; sending", files.len());
                 files::send_paths(files);
             }
-            None
+            false
         }
         EventType::ButtonRelease(b) if st.local_buttons.contains(&b) => {
             st.local_buttons.retain(|d| *d != b);
-            Some(ev)
+            true
         }
         EventType::KeyPress(Key::Escape) if st.ctrl && st.alt => {
             // Emergency hotkey: Ctrl+Alt+Esc takes control back.
@@ -292,8 +313,8 @@ fn on_event(state: &Mutex<State>, g: &Geometry, ev: Event) -> Option<Event> {
             st.alt = false;
             drop(st);
             emit(Status::Focus { remote: false });
-            platform::warp(cx, cy);
-            None
+            platform::leave_remote(cx, cy);
+            false
         }
         other => {
             match other {
@@ -302,7 +323,7 @@ fn on_event(state: &Mutex<State>, g: &Geometry, ev: Event) -> Option<Event> {
                 _ => {}
             }
             st.send(Msg::Input(other));
-            None
+            false
         }
     }
 }
@@ -410,7 +431,7 @@ fn handle_client(
                     drop(st);
                     emit(Status::Focus { remote: false });
                     let (x, y) = g.layout().entry_point(g.edge, pos, 2.0);
-                    platform::warp(x, y);
+                    platform::leave_remote(x, y);
                 }
             }
             Ok(Msg::Clipboard(text)) => clipboard::apply(clip, text),
@@ -433,7 +454,7 @@ fn handle_client(
             st.remote = false;
             drop(st);
             let (cx, cy) = g.layout().home();
-            platform::warp(cx, cy);
+            platform::leave_remote(cx, cy);
         }
         emit(Status::PeerDisconnected { name: name.clone(), reason: result.clone() });
     }
