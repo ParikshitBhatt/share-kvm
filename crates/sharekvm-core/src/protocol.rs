@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use std::str::FromStr;
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 pub const DEFAULT_PORT: u16 = 24801;
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 

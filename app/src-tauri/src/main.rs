@@ -286,12 +286,12 @@ fn window_visible(app: &AppHandle) -> bool {
 /// One-line status for the tray menu and tooltip.
 fn status_line(v: &serde_json::Value) -> String {
     let peer = v["peer"].as_str().unwrap_or("the other computer");
-    let server = v["mode"].as_str() == Some("server");
+    let controlling = v["controlling"].as_bool().unwrap_or(false);
     match v["state"].as_str().unwrap_or("stopped") {
         "waiting" => "Waiting for the other computer".into(),
         "connecting" => "Connecting…".into(),
         "connected" => format!("Connected to {peer}"),
-        "active" if server => format!("Controlling {peer}"),
+        "active" if controlling => format!("Controlling {peer}"),
         "active" => format!("Being controlled by {peer}"),
         "error" => "Needs attention: open Settings".into(),
         _ => "Sharing is off".into(),

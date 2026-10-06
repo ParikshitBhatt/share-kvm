@@ -4,8 +4,8 @@ Share one mouse and keyboard between computers (Windows ↔ Windows, Windows ↔
 
 ## How it works
 
-- **Server**: the computer with the physical mouse and keyboard. A global input hook watches the cursor. When it touches the configured edge, local input is swallowed and streamed to the client.
-- **Client**: the computer being controlled. It replays the events and hands control back when the cursor leaves through the edge facing the server.
+- **Two-way control** ([`peer.rs`](crates/sharekvm-core/src/peer.rs)): every computer runs both a global input hook and an injector. Whichever computer's mouse crosses the shared edge drives the other; moving back hands control back. Input from a computer's own devices while it's being driven makes it take control back. Replayed input is recognised as injected (macOS: the event's source process; Windows: the low-level hook's injected flag) and never triggers that.
+- **Host / Connect** only decide who listens and who connects for pairing. The host's edge setting says where the other computer is; the connecting computer uses the opposite edge.
 - Messages are `bincode`, sent as length-prefixed frames over TCP (port 24801) with Nagle's algorithm turned off for low latency.
 
 ## Android phones, tablets and Android TV
@@ -67,7 +67,7 @@ Each computer reads its real monitor arrangement ([`screens.rs`](crates/sharekvm
 
 ## Finding other computers
 
-The sharing computer announces itself on the local network over mDNS/DNS-SD (the protocol behind Bonjour), as `_sharekvm._tcp`. On the other computer, **Be controlled** lists every ShareKVM computer it can see, tagged **Paired**, **New** (needs the code once) or **Different version**. Click **Connect** to use one.
+The sharing computer announces itself on the local network over mDNS/DNS-SD (the protocol behind Bonjour), as `_sharekvm._tcp`. On the other computer, **Connect** lists every ShareKVM computer it can see, tagged **Paired**, **New** (needs the code once) or **Different version**. Click **Connect** to use one.
 
 - **Changing addresses:** the app remembers each server's device ID. If a router hands the server a new IP address, the client looks it up again by ID and reconnects on its own.
 - **Trust:** discovery only finds computers. Nothing it reports is trusted until the encrypted pairing handshake succeeds.
@@ -131,8 +131,10 @@ ShareKVM runs in the background like a system utility:
 
 First-time setup:
 
-1. On the computer with the mouse and keyboard, choose **Share my mouse & keyboard** and click the side the other computer is on.
-2. On the other computer, choose **Be controlled**, click **Connect** next to the first computer, and enter its pairing code once.
+1. On one computer, choose **Host** and click the side the other computer is on.
+2. On the other computer, choose **Connect**, click **Connect** next to the first computer, and enter its pairing code once.
+
+From then on control is two-way: push either computer's cursor over the shared edge to drive the other one. If a computer is being driven and someone touches its own mouse or keyboard, it takes control straight back.
 
 Development builds (`target/debug`) don't register themselves as a login item unless you switch on **Open ShareKVM at login**. Release builds do so by default.
 

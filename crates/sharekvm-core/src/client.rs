@@ -1,22 +1,25 @@
-//! Client: a machine controlled by the server's mouse and keyboard.
+//! Client: the computer that connects to a host (and reconnects, and finds it
+//! again by device ID if its address changes).
 //!
-//! The client keeps a virtual cursor position. Deltas from the server move it;
-//! moving past the edge that faces the server hands control back.
+//! Control is two-way and lives in `peer`: once connected, either computer's
+//! mouse and keyboard can drive the other.
 
 use crate::clipboard;
 use crate::discovery;
 use crate::files;
-use crate::link::{self, Link};
-use crate::platform::{self, Injector};
-use crate::protocol::{describe_disconnect, Msg, DEFAULT_PORT};
-use crate::screens::{Layout, Step};
+use crate::hook;
+use crate::link;
+use crate::peer::Peer;
+use crate::platform;
+use crate::protocol::{describe_disconnect, Edge, Msg, DEFAULT_PORT};
 use crate::secure::{self, AuthError};
 use crate::status::{emit, Status};
 use crate::trust::{from_hex, to_hex, DeviceId, Role, TrustStore};
 use anyhow::{anyhow, bail, Context, Result};
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -39,26 +42,38 @@ pub struct ClientConfig {
     pub data_dir: PathBuf,
 }
 
-type CurrentTx = Arc<Mutex<Option<Link>>>;
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Connects to the server and reconnects forever.
+/// Connects to the server and reconnects forever, while this computer's
+/// input hook runs on the main thread (macOS requires it).
 pub fn run_client(cfg: ClientConfig) -> Result<()> {
     platform::init();
     let trust = TrustStore::open(&cfg.data_dir).with_context(|| format!("open {}", cfg.data_dir.display()))?;
+    // The real edge arrives with the server's Welcome.
+    let peer = Peer::new(Edge::Left, false, cfg.swap_ctrl_meta);
     let clip = clipboard::new_last();
-    let current: CurrentTx = Arc::default();
     {
-        let current = current.clone();
-        clipboard::spawn_watcher(clip.clone(), move |text| {
-            if let Some(tx) = &*current.lock().unwrap() {
-                let _ = tx.send(Msg::Clipboard(text));
-            }
-        });
+        let peer = peer.clone();
+        clipboard::spawn_watcher(clip.clone(), move |text| peer.send(Msg::Clipboard(text)));
     }
+    {
+        let peer = peer.clone();
+        thread::Builder::new().name("session".into()).spawn(move || {
+            if let Err(e) = connect_forever(&cfg, &trust, &clip, &peer) {
+                // Retrying can't fix this (e.g. a wrong pairing code): report and stop.
+                eprintln!("Error: {e:#}");
+                std::process::exit(1);
+            }
+        })?;
+    }
+    hook::run(move |h| peer.on_local(h))
+        .map_err(|e| anyhow!("{e}. On macOS, grant Accessibility and Input Monitoring permission to this app/terminal."))
+}
 
+fn connect_forever(cfg: &ClientConfig, trust: &TrustStore, clip: &clipboard::Last, peer: &Arc<Peer>) -> Result<()> {
     let mut server = with_port(&cfg.server);
     loop {
-        match session(&cfg, &server, &trust, &clip, &current) {
+        match session(cfg, &server, trust, clip, peer) {
             // Retrying can't fix these; let the user act.
             Err(e)
                 if matches!(
@@ -76,7 +91,7 @@ pub fn run_client(cfg: ClientConfig) -> Result<()> {
             Err(e) => {
                 log::warn!("{e:#}");
                 // Maybe the server got a new IP address: look it up by device ID.
-                let id = cfg.server_id.or_else(|| remembered_id_for(&trust, &server));
+                let id = cfg.server_id.or_else(|| remembered_id_for(trust, &server));
                 if let Some(found) = id.and_then(|id| discovery::find(&id, LOOKUP_TIMEOUT)) {
                     if let Some(addr) = found.socket_addr().map(|a| a.to_string()).filter(|a| *a != server) {
                         log::info!("'{}' is now at {addr}", found.name);
@@ -88,7 +103,6 @@ pub fn run_client(cfg: ClientConfig) -> Result<()> {
             }
             Ok(()) => {}
         }
-        *current.lock().unwrap() = None;
         thread::sleep(RETRY_EVERY);
     }
 }
@@ -114,7 +128,7 @@ fn remembered_id_for(trust: &TrustStore, addr: &str) -> Option<DeviceId> {
         .and_then(|p| from_hex(&p.id))
 }
 
-fn session(cfg: &ClientConfig, server: &str, trust: &TrustStore, clip: &clipboard::Last, current: &CurrentTx) -> Result<()> {
+fn session(cfg: &ClientConfig, server: &str, trust: &TrustStore, clip: &clipboard::Last, peer: &Arc<Peer>) -> Result<()> {
     let addr_str = server.to_string();
     emit(Status::Connecting { addr: addr_str.clone() });
     let addr = addr_str.to_socket_addrs()?.next().ok_or_else(|| anyhow!("cannot resolve {addr_str}"))?;
@@ -178,7 +192,8 @@ fn session(cfg: &ClientConfig, server: &str, trust: &TrustStore, clip: &clipboar
 
     link::tune_socket(&stream);
     let tx = link::spawn_writer(writer, stream.try_clone()?);
-    *current.lock().unwrap() = Some(tx.clone());
+    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+    peer.connected(id, tx.clone(), server_edge);
     files::set_link(Some(tx.clone()));
     {
         let ping = tx.ctrl.clone();
@@ -188,71 +203,20 @@ fn session(cfg: &ClientConfig, server: &str, trust: &TrustStore, clip: &clipboar
             }
         });
     }
-
-    let mut layout = Layout::detect();
-    let mut inj = Injector::new(cfg.swap_ctrl_meta);
-    let mut active = false;
-    let (mut x, mut y) = layout.home();
-    // Files dragged off this screen toward the server, sent once dropped there.
-    let mut dragging_out: Vec<PathBuf> = Vec::new();
+    drop(tx);
 
     let err = loop {
-        let msg = match reader.recv() {
-            Ok(m) => m,
+        match reader.recv() {
+            Ok(m) if peer.on_remote(id, &m) => {}
+            Ok(Msg::Clipboard(text)) => clipboard::apply(clip, text),
+            Ok(Msg::Ping) => {}
+            Ok(m) if files::handle(&m) => {}
+            Ok(other) => log::debug!("ignoring {other:?}"),
             Err(e) => break describe_disconnect(&e),
-        };
-        match msg {
-            Msg::Enter { pos } => {
-                // Re-read monitors on every entry, so plugging one in or out is picked up.
-                let fresh = Layout::detect();
-                if fresh != layout {
-                    log::info!("using {} monitor(s)", fresh.monitors.len());
-                    layout = fresh;
-                }
-                (x, y) = layout.entry_point(server_edge, pos, 1.0);
-                active = true;
-                dragging_out.clear(); // came back without dropping on the server
-                inj.move_to(x, y);
-                emit(Status::Focus { remote: true });
-            }
-            Msg::MouseDelta { dx, dy } if active => {
-                // Moves arrive in logical pixels; scale to the monitor the cursor is on.
-                let s = layout.scale_at(x, y);
-                let (nx, ny) = match layout.step(server_edge, (x, y), (x + dx * s, y + dy * s)) {
-                    Step::Move(nx, ny) => (nx, ny),
-                    Step::Leave(pos) => {
-                    dragging_out = inj.dragged_files();
-                    tx.send(Msg::Leave { pos });
-                    if !dragging_out.is_empty() {
-                        log::info!("carrying {} dragged item(s) to the server", dragging_out.len());
-                        tx.send(Msg::DragOut);
-                    }
-                    inj.release_all(); // cancels the local drag (Escape) before releasing
-                    active = false;
-                    emit(Status::Focus { remote: false });
-                    continue;
-                    }
-                };
-                (x, y) = (nx, ny);
-                inj.move_to(x, y);
-            }
-            Msg::Input(ev) if active => inj.input(ev),
-            Msg::Release => {
-                inj.release_all();
-                active = false;
-                emit(Status::Focus { remote: false });
-            }
-            Msg::Clipboard(text) => clipboard::apply(clip, text),
-            Msg::DropHere if !dragging_out.is_empty() => {
-                files::send_paths(std::mem::take(&mut dragging_out));
-            }
-            m if files::handle(&m) => {}
-            Msg::Ping | Msg::MouseDelta { .. } | Msg::Input(_) | Msg::DropHere => {}
-            other => log::debug!("ignoring {other:?}"),
         }
     };
 
-    inj.release_all();
+    peer.disconnected(id);
     files::set_link(None);
     let _ = stream.shutdown(Shutdown::Both);
     emit(Status::PeerDisconnected { name: addr.to_string(), reason: err.clone() });

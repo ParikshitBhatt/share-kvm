@@ -110,7 +110,7 @@ class MainActivity : Activity() {
         computers = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col += computers
         computersEmpty = text(
-            "Looking… On the computer, open ShareKVM and choose “Share my mouse & keyboard”. Both must be on the same Wi-Fi.",
+            "Looking… On the computer, open ShareKVM and choose “Host”. Both must be on the same Wi-Fi.",
             13f, muted = true,
         )
         col += computersEmpty
@@ -316,7 +316,7 @@ class MainActivity : Activity() {
 
     companion object {
         /** Must match the desktop engine's protocol version. */
-        const val PROTOCOL_VERSION = 4
+        const val PROTOCOL_VERSION = 5
         const val DEFAULT_PORT = 24801
         private const val GOOD = 0xFF22C55E.toInt()
         private const val BAD = 0xFFF87171.toInt()

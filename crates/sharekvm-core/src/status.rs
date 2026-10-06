@@ -28,8 +28,10 @@ pub enum Status {
     /// A transfer finished. `path` is where received files were saved.
     TransferDone { id: u64, direction: String, label: String, path: Option<String> },
     TransferFailed { id: u64, direction: String, label: String, reason: String },
-    /// Mouse and keyboard focus moved. `remote` = the client is being driven.
-    Focus { remote: bool },
+    /// Who has control changed. `remote`: control is away from local use.
+    /// `controlling`: true if this computer drives the other, false if it is
+    /// (or was) being driven by it.
+    Focus { remote: bool, controlling: bool },
 }
 
 type Hook = Box<dyn Fn(&Status) + Send + Sync>;

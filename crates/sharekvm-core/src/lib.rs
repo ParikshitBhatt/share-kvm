@@ -19,14 +19,22 @@ pub mod client;
 pub mod clipboard;
 #[cfg(feature = "desktop")]
 pub mod discovery;
+#[cfg(feature = "desktop")]
+mod hook;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 mod mac_hook;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 mod mac_keys;
 #[cfg(feature = "desktop")]
+mod peer;
+#[cfg(feature = "desktop")]
 pub mod platform;
 #[cfg(feature = "desktop")]
 pub mod server;
+#[cfg(all(feature = "desktop", windows))]
+mod win_hook;
+#[cfg(all(feature = "desktop", windows))]
+mod win_keys;
 
 #[cfg(feature = "desktop")]
 pub use client::{run_client, ClientConfig};

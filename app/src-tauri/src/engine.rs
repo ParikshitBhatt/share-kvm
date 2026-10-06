@@ -26,6 +26,8 @@ pub struct Snapshot {
     pub peer: Option<String>,
     pub message: Option<String>,
     pub log: Vec<String>,
+    /// While `state` is "active": true if this computer drives the other, false if it's being driven.
+    pub controlling: bool,
     /// The user has to do something (enter a code, fix a setting); don't auto-retry.
     pub needs_user: bool,
     /// Which engine process this snapshot belongs to; stale threads check it.
@@ -252,6 +254,7 @@ fn apply_event(s: &mut Snapshot, v: &Value) {
         }
         Some("focus") => {
             let remote = v.get("remote").and_then(Value::as_bool).unwrap_or(false);
+            s.controlling = v.get("controlling").and_then(Value::as_bool).unwrap_or(false);
             s.state = if remote { "active" } else { "connected" }.into();
         }
         _ => {}

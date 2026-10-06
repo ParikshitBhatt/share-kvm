@@ -8,6 +8,7 @@
 //! movement deltas, sees drags, freezes the cursor while the other computer is
 //! active (as Barrier/Synergy do), and re-enables itself if macOS disables it.
 
+use crate::hook::Hooked;
 use crate::mac_keys::key_from_code;
 use core_foundation::base::TCFType;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
@@ -20,14 +21,6 @@ use rdev::{Button, EventType, Key};
 use std::cell::RefCell;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
-
-/// What the hook reports to the server.
-#[derive(Debug, Clone, Copy)]
-pub enum Hooked {
-    /// Pointer moved: position after the move, and the move itself (points).
-    Move { x: f64, y: f64, dx: f64, dy: f64 },
-    Input(EventType),
-}
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -69,19 +62,23 @@ fn modifier_mask(code: u16) -> Option<u64> {
 }
 
 fn convert(etype: CGEventType, ev: &CGEvent) -> Vec<Hooked> {
+    // Events posted by this process (ShareKVM replaying the other computer) carry our PID.
+    let injected = ev.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID) == std::process::id() as i64;
     let key = || key_from_code(ev.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16);
-    let input = |e| vec![Hooked::Input(e)];
+    let input = |e| vec![Hooked { ev: e, delta: None, injected }];
     match etype {
         CGEventType::MouseMoved
         | CGEventType::LeftMouseDragged
         | CGEventType::RightMouseDragged
         | CGEventType::OtherMouseDragged => {
             let p = ev.location();
-            vec![Hooked::Move {
-                x: p.x,
-                y: p.y,
-                dx: ev.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X),
-                dy: ev.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y),
+            vec![Hooked {
+                ev: EventType::MouseMove { x: p.x, y: p.y },
+                delta: Some((
+                    ev.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X),
+                    ev.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y),
+                )),
+                injected,
             }]
         }
         CGEventType::LeftMouseDown => input(EventType::ButtonPress(Button::Left)),
@@ -98,8 +95,8 @@ fn convert(etype: CGEventType, ev: &CGEvent) -> Vec<Hooked> {
             match (key_from_code(code), modifier_mask(code)) {
                 // Caps Lock reports each toggle once: send a full key press.
                 (Key::CapsLock, _) => vec![
-                    Hooked::Input(EventType::KeyPress(Key::CapsLock)),
-                    Hooked::Input(EventType::KeyRelease(Key::CapsLock)),
+                    Hooked { ev: EventType::KeyPress(Key::CapsLock), delta: None, injected },
+                    Hooked { ev: EventType::KeyRelease(Key::CapsLock), delta: None, injected },
                 ],
                 (k, Some(mask)) if flags & mask != 0 => input(EventType::KeyPress(k)),
                 (k, Some(_)) => input(EventType::KeyRelease(k)),

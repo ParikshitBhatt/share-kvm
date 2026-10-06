@@ -30,13 +30,12 @@ function set(key, value) {
 // ---- rendering ----
 
 function statusText() {
-  const peer = status.peer ? ` ${status.peer}` : "";
-  const server = status.mode === "server";
+  const peer = status.peer ? ` ${status.peer}` : " the other computer";
   switch (status.state) {
     case "waiting": return "Waiting for the other computer";
-    case "connecting": return `Connecting to ${settings.serverAddress || "server"}…`;
-    case "connected": return server ? `Connected to${peer}` : "Connected";
-    case "active": return server ? `Controlling${peer}` : "Being controlled";
+    case "connecting": return `Connecting to ${settings.serverAddress || "the other computer"}…`;
+    case "connected": return `Connected to${peer}`;
+    case "active": return status.controlling ? `Controlling${peer}` : `Being controlled by${peer}`;
     case "error": return "Needs attention";
     default: return settings.enabled ? "Starting…" : "Sharing is off";
   }
@@ -76,7 +75,7 @@ function render() {
   const msg = $("message");
   let text = status.message;
   if (!text && running && status.state === "waiting") {
-    text = `On the other computer, open ShareKVM, choose “Be controlled”, and enter the address and code above. Then move your cursor off the ${EDGE_WORDS[settings.edge]} edge of this screen.`;
+    text = `On the other computer, open ShareKVM, choose “Connect”, and enter the address and code above. Once connected, either computer's mouse and keyboard can control both: cross the ${EDGE_WORDS[settings.edge]} edge of this screen, or the facing edge of the other one.`;
   }
   if (!text && status.state === "connected" && mode === "client") {
     text = "Move the mouse on the other computer to the edge of its screen to start controlling this one.";
