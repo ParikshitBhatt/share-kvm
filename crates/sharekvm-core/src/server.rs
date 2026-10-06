@@ -271,7 +271,9 @@ fn on_event(state: &Mutex<State>, g: &Geometry, ev: EventType, delta: Option<(f6
                 st.warp_pending = false;
                 return true;
             }
-            st.send(Msg::MouseDelta { dx, dy });
+            // Send logical pixels, so the move is the same size on any display scale.
+            let s = layout.scale_at(cx, cy);
+            st.send(Msg::MouseDelta { dx: dx / s, dy: dy / s });
             st.warp_pending = true;
             drop(st);
             platform::warp(cx, cy);

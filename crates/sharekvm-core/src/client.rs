@@ -216,7 +216,9 @@ fn session(cfg: &ClientConfig, server: &str, trust: &TrustStore, clip: &clipboar
                 emit(Status::Focus { remote: true });
             }
             Msg::MouseDelta { dx, dy } if active => {
-                let (nx, ny) = match layout.step(server_edge, (x, y), (x + dx, y + dy)) {
+                // Moves arrive in logical pixels; scale to the monitor the cursor is on.
+                let s = layout.scale_at(x, y);
+                let (nx, ny) = match layout.step(server_edge, (x, y), (x + dx * s, y + dy * s)) {
                     Step::Move(nx, ny) => (nx, ny),
                     Step::Leave(pos) => {
                     dragging_out = inj.dragged_files();

@@ -229,6 +229,7 @@ mod win {
     use std::mem::size_of;
     use windows_sys::Win32::Foundation::{BOOL, LPARAM, RECT};
     use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
     };
@@ -242,7 +243,10 @@ mod win {
         info.cbSize = size_of::<MONITORINFO>() as u32;
         if GetMonitorInfoW(mon, &mut info) != 0 {
             let r = info.rcMonitor;
-            let rect = Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64);
+            let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
+            GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
+            let rect = Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64)
+                .with_scale(dpi_x as f64 / 96.0);
             out.push((rect, info.dwFlags & MONITORINFOF_PRIMARY != 0));
         }
         1

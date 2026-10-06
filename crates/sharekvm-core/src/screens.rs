@@ -8,6 +8,12 @@
 //! Positions along an edge travel between computers as a 0..1 fraction of
 //! the desktop's bounding box, so the hand-over point stays consistent
 //! whatever the two arrangements are.
+//!
+//! Mouse movement travels in *logical* pixels (macOS points; Windows pixels
+//! divided by the monitor's display scale), so a hand movement covers the
+//! same distance on every computer whatever its resolution and scaling.
+//! `Rect::scale` converts: physical = logical × scale (always 1 on macOS,
+//! whose coordinates are already logical).
 
 use crate::protocol::Edge;
 use serde::Serialize;
@@ -18,11 +24,16 @@ pub struct Rect {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// Coordinate units per logical pixel on this monitor (Windows display scale, e.g. 1.5).
+    pub scale: f64,
 }
 
 impl Rect {
     pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
-        Self { x, y, w, h }
+        Self { x, y, w, h, scale: 1.0 }
+    }
+    pub fn with_scale(self, scale: f64) -> Self {
+        Self { scale: if scale.is_finite() && scale > 0.0 { scale } else { 1.0 }, ..self }
     }
     pub fn right(&self) -> f64 {
         self.x + self.w
@@ -106,6 +117,11 @@ impl Layout {
                 .min_by(|a, b| a.distance(x, y).total_cmp(&b.distance(x, y)))
                 .expect("at least one monitor")
         })
+    }
+
+    /// Display scale of the monitor at (x, y): coordinate units per logical pixel.
+    pub fn scale_at(&self, x: f64, y: f64) -> f64 {
+        self.nearest(x, y).scale
     }
 
     /// Where the server parks its cursor while the client is active.
@@ -295,5 +311,28 @@ mod tests {
         let l = Layout::new(vec![r, r, Rect::new(0.0, 0.0, 0.0, 0.0)], 1);
         assert_eq!(l.monitors.len(), 1);
         assert_eq!(l.primary, 0);
+    }
+
+    #[test]
+    fn movement_is_the_same_logical_distance_on_every_monitor() {
+        // Windows server at 150% sends physical moves as logical ones...
+        let server = Layout::new(vec![Rect::new(0.0, 0.0, 2880.0, 1800.0).with_scale(1.5)], 0);
+        let (px, py) = (30.0, -15.0);
+        let s = server.scale_at(1440.0, 900.0);
+        let (lx, ly) = (px / s, py / s);
+        assert_eq!((lx, ly), (20.0, -10.0));
+        // ...and a client turns them back into its own pixels, per monitor.
+        let client = Layout::new(
+            vec![Rect::new(0.0, 0.0, 1920.0, 1080.0), Rect::new(1920.0, 0.0, 3840.0, 2160.0).with_scale(2.0)],
+            0,
+        );
+        assert_eq!(client.scale_at(100.0, 100.0) * lx, 20.0);
+        assert_eq!(client.scale_at(2500.0, 100.0) * lx, 40.0);
+        // Nothing is lost to rounding over many small moves.
+        let mut x: f64 = 0.0;
+        for _ in 0..1000 {
+            x += 0.3 / 1.5 * 1.25;
+        }
+        assert!((x - 250.0).abs() < 1e-9);
     }
 }
