@@ -193,7 +193,7 @@ async function connectTo(f, isPaired) {
   settings.serverId = f.id;
   $("server-address").value = settings.serverAddress;
   if (!isPaired && !settings.clientCode) {
-    status = { ...status, state: "stopped", message: `Enter the pairing code shown on ${f.name}, then press Start sharing.` };
+    status = { ...status, state: "stopped", message: `Enter the pairing code shown on ${f.name}, then press Enter.` };
     save();
     render();
     $("code-client").focus();
@@ -435,14 +435,21 @@ document.querySelectorAll(".segmented button").forEach((b) =>
 document.querySelectorAll(".slot").forEach((b) =>
   b.addEventListener("click", () => set("edge", b.dataset.edge)));
 
-$("code-server").addEventListener("input", (e) => { settings.code = e.target.value.trim(); save(); });
-$("code-client").addEventListener("input", (e) => { settings.clientCode = e.target.value.trim(); save(); });
-$("server-address").addEventListener("input", (e) => {
+// Text fields apply when you press Enter or leave the field, never mid-typing:
+// a half-typed pairing code would count as a wrong guess (5 trigger a lockout).
+const onCommit = (id, fn) => {
+  $(id).addEventListener("change", (e) => fn(e.target.value));
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+};
+onCommit("code-server", (v) => saveNow({ code: v.trim() }));
+onCommit("code-client", (v) => saveNow({ clientCode: v.trim() }));
+onCommit("name", (v) => saveNow({ name: v.trim() || settings.name }));
+$("server-address").addEventListener("change", (e) => {
   settings.serverAddress = e.target.value.trim();
   settings.serverId = ""; // typed by hand: no longer tied to a discovered computer
-  save();
+  saveNow({});
 });
-$("name").addEventListener("input", (e) => { settings.name = e.target.value; save(); });
+$("server-address").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
 $("port").addEventListener("change", (e) => {
   const p = parseInt(e.target.value, 10);
   if (p >= 1024 && p <= 65535) set("port", p); else render();
